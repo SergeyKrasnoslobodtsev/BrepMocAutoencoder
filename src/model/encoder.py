@@ -8,19 +8,19 @@ class CustomBRepEncoder(torch.nn.Module):
         super().__init__()
         self.use_attention = use_attention
 
-        # Initial feature embedding layers for vertices, edges, and faces
+        # Инициализация входных эмбеддингов
         self.embed_v_in = LinearBlock(v_in_width, out_width)
         self.embed_e_in = LinearBlock(e_in_width, out_width)
         self.embed_f_in = LinearBlock(f_in_width, out_width)
 
-        # Message passing layers for encoding hierarchical structure
+        # Первичные слои передачи сообщений
         self.V2E = BipartiteResMRConv(out_width)
         self.E2F = BipartiteResMRConv(out_width)
 
-        # Additional message passing layers to refine features
+        # Дополнительные слои передачи сообщений для уточнения признаков
         self.message_layers = ModuleList([BipartiteResMRConv(out_width) for _ in range(num_layers)])
 
-        # Attention mechanism for handling varied neighborhood sizes
+        # Опциональные слои внимания
         if self.use_attention:
             self.attention_layers = ModuleList([gat_conv.GATConv(out_width, out_width//4, heads=4) for _ in range(num_layers)])
 
@@ -44,7 +44,7 @@ class CustomBRepEncoder(torch.nn.Module):
         f_e = data['face_to_edge'].long().contiguous()     # [2, Nfe]
         f_f = data['face_to_face'].long().contiguous()     # [2, Nff]
 
-        # ➜ self-loops для лиц (защита внимания от пустых соседств)
+        # self-loops для лиц (защита внимания от пустых соседств)
         nf = x_f.size(0)
         if f_f.numel() == 0:
             f_f = torch.empty(2, 0, dtype=torch.long, device=x_f.device)
@@ -76,7 +76,7 @@ class BipartiteResMRConv(torch.nn.Module):
         maxes = torch.nan_to_num(maxes, neginf=0.0, posinf=0.0)
         return x_dst + self.mlp(torch.cat([x_dst, maxes], dim=1))
 
-# LinearBlock with flexibility for configurations
+# Базовый линейный блок с опциональными слоями
 class LinearBlock(torch.nn.Module):
     def __init__(self, *layer_sizes, batch_norm=False, dropout=0.0, last_linear=False, leaky=True):
         super().__init__()

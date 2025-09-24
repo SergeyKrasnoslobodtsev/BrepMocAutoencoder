@@ -127,11 +127,11 @@ class BRepAutoEncoderModule(pl.LightningModule):
         # if isinstance(batch, (list, tuple)):
         #     batch = batch[0]
 
-        # ===== 2.1. Эмбеддинги лиц энкодером (query) =====
+        # Эмбеддинги граней энкодером (query)
         z_faces_q = self.encoder(batch)                 # [F, D]
         z_faces_q = torch.nan_to_num(z_faces_q)
         if z_faces_q.size(0) == 0:
-            # нет граней → пропускаем пример (нулевые лоссы)
+            # нет граней пропускаем пример (нулевые лоссы)
             zero = torch.zeros((), device=self.device)
             dummy_logits = torch.zeros((1, 1 + self.queue_size), device=self.device)
             dummy_fin_z = torch.tensor(1.0, device=self.device)
@@ -140,7 +140,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
         z_faces_q = F.normalize(z_faces_q, dim=-1, eps=1e-6)
         z_q = F.normalize(z_faces_q.mean(dim=0), dim=0, eps=1e-6)  # [D]
 
-        # ===== 2.2. Слабая аугментация и momentum-энкодер (key) =====
+        # Слабая аугментация и momentum-энкодер (key)
         # https://sh-tsang.medium.com/review-moco-momentum-contrast-for-unsupervised-visual-representation-learning-99b590c042a9
         with torch.no_grad():
             self._momentum_update()
@@ -164,7 +164,6 @@ class BRepAutoEncoderModule(pl.LightningModule):
             z_faces_k = F.normalize(z_faces_k, dim=-1, eps=1e-6)
             z_k = F.normalize(z_faces_k.mean(dim=0), dim=0, eps=1e-6)      # [D]
 
-        # 
         queue = torch.nan_to_num(self.z_queue.detach()).to(z_q.device, dtype=z_q.dtype) # type: ignore
         assert z_q.shape[0] == queue.shape[0], f"MoCo dim mismatch: z_q={z_q.shape}, queue={queue.shape}"
 
@@ -275,12 +274,10 @@ class BRepAutoEncoderModule(pl.LightningModule):
         return loss
 
     def compute_xyz_from_uv(self, uv_coords):
-        """ Простейшая проекция UV в 3D пространство (z=0).
-            спиздили у китайцев
-        """
-        x = uv_coords[:, 0]  # x координата
-        y = uv_coords[:, 1]  # y координата
-        z = torch.zeros_like(x)  # z координата
+        """ Простейшая проекция UV в 3D пространство (z=0)."""
+        x = uv_coords[:, 0] 
+        y = uv_coords[:, 1]  
+        z = torch.zeros_like(x)  
 
         return torch.stack([x, y, z], dim=-1)
 
