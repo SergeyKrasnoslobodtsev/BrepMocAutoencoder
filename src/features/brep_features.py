@@ -6,7 +6,7 @@ from OCC.Core.STEPControl import STEPControl_Reader
 from OCC.Extend import TopologyUtils
 from OCC.Core.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
                              TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND,
-                             TopAbs_COMPSOLID, TopAbs_REVERSED)
+                             TopAbs_COMPSOLID, TopAbs_REVERSED, TopAbs_IN)
 from OCC.Core.TopExp import topexp
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.BRepGProp import brepgprop
@@ -35,14 +35,28 @@ from .entity_mapper import EntityMapper
 from ..utils.scale_utils import scale_solid_to_unit_box 
 from ..utils.create_occwl_from_occ import create_occwl
 
+# compute sdf
+from scipy.spatial import KDTree
+from OCC.Core.gp import gp_Pnt2d
+from OCC.Core.BRepClass import BRepClass_FaceClassifier
+
+
 class BRepNetExtractor:
-    def __init__(self, step_file, output_dir, feature_schema, scale_body=True):
+    def __init__(self, 
+                 step_file, 
+                 output_dir, 
+                 feature_schema, 
+                 scale_body=True, 
+                 uv_samples=128,
+                 n_sdf_samples=500):
+
+
         self.step_file = step_file
         self.output_dir = output_dir
         self.feature_schema = feature_schema
         self.scale_body = scale_body
-        self.uv_sample_resolution = 128
-        self.n_sdf_samples_per_face = 500
+        self.uv_sample_resolution = uv_samples
+        self.n_sdf_samples_per_face = n_sdf_samples
 
 
     def process(self):
@@ -89,7 +103,7 @@ class BRepNetExtractor:
 
         next, mate, face, edge  = self.build_incidence_arrays(body, entity_mapper)
 
-
+        
 
         coedge_scale_factors = self.extract_scale_factors(
             next, 
@@ -103,7 +117,9 @@ class BRepNetExtractor:
         edge_to_vertex = self.extract_edge_to_vertex(body, entity_mapper)
         face_to_edge = self.extract_face_to_edge(face, edge)
         face_to_face = self.extract_face_to_face(mate, face)
-
+        
+        uv_samples_faces, sdf_values_faces = self.extract_uv_samples_and_sdf(body, entity_mapper)
+        
         output_pathname = self.output_dir / f"{self.step_file.stem}.npz"
         np.savez_compressed(
             output_pathname, 
@@ -122,7 +138,9 @@ class BRepNetExtractor:
             vertex=vertex,
             edge_to_vertex=edge_to_vertex,
             face_to_edge=face_to_edge,
-            face_to_face=face_to_face
+            face_to_face=face_to_face,
+            uv_faces=uv_samples_faces,      
+            sdf_faces=sdf_values_faces 
         )
 
 
@@ -875,6 +893,78 @@ class BRepNetExtractor:
         return next, mate, coedge_to_face, coedge_to_edge
 
 
+    def extract_uv_samples_and_sdf(self, body, entity_mapper):
+        """
+        Для каждой грани извлекаем UV-сэмплы и таргеты SDF.
+
+        Метод возвращает кортеж из двух элементов:
+
+            - uv_samples_faces  [F, n_samples, 2]  нормализованные UV
+            - sdf_values_faces  [F, n_samples]     таргеты SDF
+        """
+        top_exp = TopologyUtils.TopologyExplorer(body, ignore_orientation=True)
+        uv_samples_faces = []
+        # xyz_targets_faces = []
+        sdf_values_faces = []
+
+        for face in top_exp.faces(): 
+
+            uv_samples = sample_uv_extended(self.uv_sample_resolution, extend=0.1)
+
+            inside_uv, outside_uv = self.query_cad_kernel_face(face, uv_samples)
+            
+            sdf_points, sdf_values = compute_sdf(inside_uv, outside_uv)
+
+            # xyz_targets = self.compute_xyz_from_uv_face(face, sdf_points)
+            sdf_points, sdf_values = bias_sample_sdf(sdf_points, sdf_values, self.n_sdf_samples_per_face, boundary_ratio=0.4)
+            uv_samples_faces.append(sdf_points)
+            # xyz_targets_faces.append(xyz_targets)
+            sdf_values_faces.append(sdf_values)
+
+        uv_samples_faces  = np.stack(uv_samples_faces,  axis=0)  # [F, n, 2]
+        # xyz_targets_faces = np.stack(xyz_targets_faces, axis=0)  # [F, n, 3]
+        sdf_values_faces  = np.stack(sdf_values_faces,  axis=0)  # [F, n]
+
+        return uv_samples_faces, sdf_values_faces
+
+    def query_cad_kernel_face(self, face, uv_samples):
+        """
+        Делим UV на inside/outside относительно ТРИМОВ грани через CAD-ядро.
+        """
+        uv = ensure_uv_2d(uv_samples)
+        surf = BRepAdaptor_Surface(face)
+        u0, u1 = surf.FirstUParameter(), surf.LastUParameter()
+        v0, v1 = surf.FirstVParameter(), surf.LastVParameter()
+        clf = BRepClass_FaceClassifier()
+
+        mask = []
+        for uv_ in uv:
+            uu = float(u0 + float(uv_[0]) * (u1 - u0))
+            vv = float(v0 + float(uv_[1]) * (v1 - v0))
+            p2d = gp_Pnt2d(uu, vv)
+            clf.Perform(face, p2d, 1e-9)
+            mask.append(clf.State() == TopAbs_IN)
+
+        mask = np.array(mask, dtype=bool)
+        inside  = uv[mask]
+        outside = uv[~mask]
+        return ensure_uv_2d(inside), ensure_uv_2d(outside)
+
+    def compute_xyz_from_uv_face(self, face, uv_coords):
+        uv = ensure_uv_2d(uv_coords)
+        if uv.shape[0] == 0:
+            return np.zeros((0, 3), dtype=np.float32)
+        surf = BRepAdaptor_Surface(face)
+        u0, u1 = surf.FirstUParameter(), surf.LastUParameter()
+        v0, v1 = surf.FirstVParameter(), surf.LastVParameter()
+        uu = u0 + uv[:, 0] * (u1 - u0)
+        vv = v0 + uv[:, 1] * (v1 - v0)
+        out = np.zeros((uv.shape[0], 3), dtype=np.float32)
+        for i in range(uv.shape[0]):
+            p = surf.Value(float(uu[i]), float(vv[i]))
+            out[i, 0] = p.X(); out[i, 1] = p.Y(); out[i, 2] = p.Z()
+        return out
+
     def check_unique_coedges(self, top_exp):
         coedge_set = set()
         for loop in top_exp.wires():
@@ -926,7 +1016,64 @@ class BRepNetExtractor:
                 faces.add(face)
         return True
 
-    
+
+
+def ensure_uv_2d(x):
+    x = np.asarray(x, dtype=np.float32)
+    if x.size == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    if x.ndim == 2 and x.shape[1] == 2:
+        return x
+    if x.ndim == 1 and x.shape[0] == 2:
+        return x.reshape(1, 2)
+    return x.reshape(-1, 2)
+
+# https://github.com/zhenshihaowanlee/Self-supervised-BRep-learning-for-CAD/blob/main/Example_data/sampled_data.py
+
+def sample_uv_extended(resolution, extend=0.1):
+    u = np.linspace(-extend, 1 + extend, resolution)
+    v = np.linspace(-extend, 1 + extend, resolution)
+    uu, vv = np.meshgrid(u, v, indexing='ij')
+    return np.stack([uu.flatten(), vv.flatten()], axis=-1)
+
+def compute_sdf(inside_points, outside_points):
+    inside = ensure_uv_2d(inside_points)
+    outside = ensure_uv_2d(outside_points)
+
+    if inside.shape[0] == 0 and outside.shape[0] == 0:
+        return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.float32)
+    if inside.shape[0] == 0:
+        return outside, -np.zeros((outside.shape[0],), dtype=np.float32)
+    if outside.shape[0] == 0:
+        return inside, np.zeros((inside.shape[0],), dtype=np.float32)
+
+    inside_tree = KDTree(outside)
+    outside_tree = KDTree(inside)
+    d_inside, _ = inside_tree.query(inside)
+    d_outside, _ = outside_tree.query(outside)
+
+    sdf_inside = d_inside.astype(np.float32)
+    sdf_outside = -d_outside.astype(np.float32)
+    sdf_points = np.concatenate([inside, outside], axis=0)
+    sdf_values = np.concatenate([sdf_inside, sdf_outside], axis=0)
+    return ensure_uv_2d(sdf_points), sdf_values.astype(np.float32)
+
+def bias_sample_sdf(sdf_points, sdf_values, n_samples, boundary_ratio=0.4):
+    pts = ensure_uv_2d(sdf_points)
+    vals = np.asarray(sdf_values, dtype=np.float32).reshape(-1)
+    if pts.shape[0] == 0:
+        return pts, vals
+    idx = np.argsort(np.abs(vals))
+    nb = int(n_samples * boundary_ratio)
+    nb = max(0, min(nb, idx.size))
+    i_boundary = idx[:nb]
+    i_pool = idx[nb:]
+    if i_pool.size:
+        i_pool = np.random.permutation(i_pool)
+    need_rand = max(0, n_samples - nb)
+    i_sel = np.concatenate([i_boundary, i_pool[:min(need_rand, i_pool.size)]], axis=0)
+    i_sel = i_sel.astype(int)
+    return pts[i_sel], vals[i_sel]  
    
 
 
