@@ -2,6 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict
 from tqdm.auto import tqdm
+import pandas as pd
 
 def l2norm(x: np.ndarray, axis: int = -1, eps: float = 1e-9) -> np.ndarray:
     if x.size == 0:
@@ -42,11 +43,11 @@ def cohens_d(pos: np.ndarray, neg: np.ndarray) -> float:
     s_p = np.sqrt(((n1 - 1) * s1 + (n2 - 1) * s2) / (n1 + n2 - 2))
     return (m1 - m2) / (s_p + 1e-9)
 
-def eval_object_max(files: List[Path], load_fn) -> Dict[str, float]:
+def eval_object_max(files: List[Path], load_fn):
     N = len(files)
     if N == 0:
         print("Warning: No embedding files found.")
-        return {}
+        return pd.DataFrame()
 
     feats_list = [l2norm(load_fn(p)) for p in tqdm(files, desc="Loading embeddings")]
 
@@ -80,8 +81,7 @@ def eval_object_max(files: List[Path], load_fn) -> Dict[str, float]:
         rank = int(np.where(order == i)[0][0]) + 1
         ranks.append(rank)
 
-    # Приводим словарь к требуемому формату
-    metrics = {
+    metrics = pd.DataFrame([{
         "queries": total_queries,
         "recall@1": recall_at_k(ranks, 1),
         "recall@5": recall_at_k(ranks, 5),
@@ -93,5 +93,19 @@ def eval_object_max(files: List[Path], load_fn) -> Dict[str, float]:
         "neg_mean": float(np.mean(neg_vals)) if neg_vals else 0.0,
         "margin": (np.mean(pos_vals) - np.mean(neg_vals)) if pos_vals and neg_vals else 0.0,
         "cohens_d": cohens_d(np.asarray(pos_vals), np.asarray(neg_vals)),
-    }
+    }])
+    
+    # metrics = {
+    #     "queries": total_queries,
+    #     "recall@1": recall_at_k(ranks, 1),
+    #     "recall@5": recall_at_k(ranks, 5),
+    #     "recall@10": recall_at_k(ranks, 10),
+    #     "mAP": mean_average_precision(ranks),
+    #     "nDCG@5": ndcg_at_k(ranks, 5),
+    #     "nDCG@10": ndcg_at_k(ranks, 10),
+    #     "pos_mean": float(np.mean(pos_vals)) if pos_vals else 0.0,
+    #     "neg_mean": float(np.mean(neg_vals)) if neg_vals else 0.0,
+    #     "margin": (np.mean(pos_vals) - np.mean(neg_vals)) if pos_vals and neg_vals else 0.0,
+    #     "cohens_d": cohens_d(np.asarray(pos_vals), np.asarray(neg_vals)),
+    # }
     return metrics

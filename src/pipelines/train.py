@@ -16,6 +16,8 @@ app = typer.Typer()
 def collate_single(samples):
     assert len(samples) == 1, "Этот автоэнкодер работает с batch_size=1"
     return samples[0]
+
+# команда для запуска python -m src.pipelines.train
 @app.command()
 def main(
     brepnet_dir: Path = typer.Option(PROCESSED_DATA_DIR / 'features' / 'brep', help="Путь к папке с признаками B-repNet (*.npz)."),
