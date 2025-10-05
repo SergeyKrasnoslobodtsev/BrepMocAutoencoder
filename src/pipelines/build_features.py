@@ -70,7 +70,7 @@ from ..config import PROCESSED_DATA_DIR, EXTERNAL_DATA_DIR
 
 @app.command()
 def run(
-    step_path_dir: Path = typer.Option(PROCESSED_DATA_DIR / "steps", help="Путь к директории с 3D моделями"),
+    step_path_dir: Path = typer.Option(PROCESSED_DATA_DIR / "step", help="Путь к директории с 3D моделями"),
     feature_list_path: Path = typer.Option(EXTERNAL_DATA_DIR / "feature_lists/all.json", help="Путь к файлу со схемой признаков"),
     num_workers: int = typer.Option(1, help="Количество потоков для обработки"),
     force_regeneration: bool = typer.Option(False, help="Перегенерировать признаки, даже если они уже существуют"),

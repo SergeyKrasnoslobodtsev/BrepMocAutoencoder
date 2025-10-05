@@ -31,8 +31,7 @@ class CustomBRepEncoder(torch.nn.Module):
         x_f = self.embed_f_in(data['faces'])
 
         #  санитайз сразу после эмбеддингов
-        def _sanitize(x: torch.Tensor) -> torch.Tensor:
-            # заменяем NaN/Inf и мягко клипуем, чтобы не закипала softmax в GAT
+        def _sanitize(x: torch.Tensor) -> torch.Tensor: 
             return torch.clamp(torch.nan_to_num(x, nan=0.0, posinf=1e4, neginf=-1e4), -1e4, 1e4)
 
         x_v = _sanitize(x_v)
@@ -44,7 +43,7 @@ class CustomBRepEncoder(torch.nn.Module):
         f_e = data['face_to_edge'].long().contiguous()     # [2, Nfe]
         f_f = data['face_to_face'].long().contiguous()     # [2, Nff]
 
-        # self-loops для лиц (защита внимания от пустых соседств)
+       
         nf = x_f.size(0)
         if f_f.numel() == 0:
             f_f = torch.empty(2, 0, dtype=torch.long, device=x_f.device)
@@ -55,7 +54,7 @@ class CustomBRepEncoder(torch.nn.Module):
         x_e = _sanitize(self.V2E(x_v, x_e, e_v[[1, 0]]))
         x_f = _sanitize(self.E2F(x_e, x_f, f_e[[1, 0]]))
 
-        # рефайнмент / внимание
+        #  внимание
         for i, layer in enumerate(self.message_layers):
             if self.use_attention:
                 x_f = _sanitize(self.attention_layers[i](_sanitize(x_f), f_f[:2, :]))

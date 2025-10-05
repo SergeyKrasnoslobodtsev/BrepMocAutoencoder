@@ -61,6 +61,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
                  points_per_face: int = 500
                  ):
         super().__init__()
+
         self.encoder = CustomBRepEncoder(
                 v_in_width=3,
                 e_in_width=10,
@@ -93,6 +94,35 @@ class BRepAutoEncoderModule(pl.LightningModule):
 
 
         self.save_hyperparameters(ignore=['encoder', 'decoder'])
+
+    def forward(self, data: Dict[str, torch.Tensor]):
+        """
+        Выполняет полный проход через автоэнкодер.
+        Args:
+            data (Dict[str, torch.Tensor]): Словарь с данными B-Rep, включая 'sdf_uv'.
+        Returns:
+            torch.Tensor: Реконструированные точки [N_faces, N_points, 4].
+        """
+        # Получаем латентные представления для каждой грани
+        face_latents = self.encoder(data)  # [F, D]
+        
+        if face_latents.numel() == 0:
+            return torch.empty(0, 0, 4, device=self.device)
+
+        uv_coords = data['sdf_uv']  # [F, S, 2]
+        num_faces = face_latents.shape[0]
+        
+        # Декодируем каждую грань отдельно
+        # (так как декодер принимает один латентный вектор за раз)
+        all_reconstructions = []
+        for i in range(num_faces):
+            latent_vector = face_latents[i]
+            face_uv_coords = uv_coords[i]
+            reconstructed_points = self.decoder(face_uv_coords, latent_vector) # [S, 4]
+            all_reconstructions.append(reconstructed_points)
+            
+        # Объединяем результаты в один тензор
+        return torch.stack(all_reconstructions, dim=0)
 
     @torch.no_grad()
     def _momentum_update(self):

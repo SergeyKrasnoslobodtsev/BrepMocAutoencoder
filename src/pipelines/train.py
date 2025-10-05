@@ -1,6 +1,6 @@
 from pathlib import Path
 from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 import torch
 from torch.utils.data import DataLoader
 import typer
@@ -23,7 +23,7 @@ def main(
     brepnet_dir: Path = typer.Option(PROCESSED_DATA_DIR / 'features' / 'brep', help="Путь к папке с признаками B-repNet (*.npz)."),
     stats_file: Path = typer.Option(PROCESSED_DATA_DIR / 'dataset_stats.json', help="Путь к выходному JSON файлу набора данных."),
     num_workers: int = typer.Option(0, help="Количество потоков для обработки"),
-    max_epochs: int = typer.Option(100, help="Максимальное количество эпох для обучения."),
+    max_epochs: int = typer.Option(5, help="Максимальное количество эпох для обучения."),
     gradient_clip_val: float = typer.Option(1.0, help="Максимальная норма градиента для обрезки."),
     # Параметры модели
     n_layers: int = typer.Option(2, help="Количество слоев в модели."),
@@ -57,9 +57,12 @@ def main(
                             num_workers=num_workers, pin_memory=torch.cuda.is_available())
 
     csv_logger = CSVLogger(save_dir=REPORTS_DIR, name="ssl_autoencoder_logs")
+    tensorboard_logger = TensorBoardLogger(save_dir=REPORTS_DIR, name="tensorboard_logs", log_graph=True)
+    
+    
     trainer = Trainer(
         max_epochs=max_epochs, 
-        logger=[csv_logger],
+        logger=[csv_logger, tensorboard_logger],
         gradient_clip_val=gradient_clip_val,
         gradient_clip_algorithm="norm",
         detect_anomaly=True, 

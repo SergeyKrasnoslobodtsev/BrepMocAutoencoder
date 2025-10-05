@@ -36,7 +36,7 @@ def standarize_data(data, feature_standardization):
 def main(
     output_dir: Path = typer.Option(PROCESSED_DATA_DIR / 'features' / 'embeddings', help="Путь к папке для сохранения признаков энкодера."),
     features_dir: Path = typer.Option(PROCESSED_DATA_DIR / 'features' / 'brep', help="Путь к папке с признаками B-repNet (*.npz)."),
-    model_path: Path = typer.Option(MODELS_DIR / 'best.ckpt', help="Путь к контрольной точке обученной модели."),
+    model_path: Path = typer.Option(MODELS_DIR / 'brep-epoch=72-val_loss=0.0122.ckpt', help="Путь к контрольной точке обученной модели."),
     stats_file: Path = typer.Option(PROCESSED_DATA_DIR / 'dataset_stats.json', help="Путь к выходному JSON файлу набора данных."),
 ):
 

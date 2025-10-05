@@ -3,9 +3,23 @@ import json
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from torch_geometric.data import Batch, Data 
+
+class BRepData(Data):
+    def __inc__(self, key, value, *args, **kwargs):
+        # Для edge_to_vertex - сдвиг по количеству вершин!
+        if key == "edge_to_vertex":
+            return self.vertices.size(0) # vertices из одного графа
+        # Для face_to_edge - сдвиг по количеству ребер!
+        elif key == "face_to_edge":
+            return self.edges.size(0)
+        # Для face_to_face - сдвиг по количеству граней!
+        elif key == "face_to_face":
+            return self.faces.size(0)
+        return super().__inc__(key, value, *args, **kwargs)
 
 def standardize_features(feature_tensor, stats):
-    # num_features = len(stats)
+
     means = np.array([s["mean"] for s in stats])
     sds = np.array([s["standard_deviation"] for s in stats])
     eps = 1e-7
@@ -26,10 +40,9 @@ class BrepNetDataset(Dataset):
     def __init__(self, json_path, feats_brep_dir, split="training_set"):
         with open(json_path, encoding="utf-8") as f:
             stats = json.load(f)
-        self.features_dir = stats["brepnet_features_dir"]
         self.files = stats[split]
-        self.feature_standardization = stats["feature_standardization"] if split == "training_set" else None
-        self.train_stats = stats["feature_standardization"]
+        self.feature_standardization = stats["feature_standardization"]
+        self.split = split
         self.brep_dir = feats_brep_dir
 
     def __len__(self):
@@ -41,41 +54,34 @@ class BrepNetDataset(Dataset):
 
         D = np.load(brep_path, allow_pickle=True)
 
-        f_e = torch.from_numpy(D["face_to_edge"].astype(np.int64))
-        if f_e.dim() == 2 and f_e.shape[0] != 2 and f_e.shape[1] == 2:
-            f_e = f_e.t()
-
-        uv = torch.from_numpy(D["uv_faces"].astype(np.float32))      # [F, 500, 2]
-        vals = torch.from_numpy(D["sdf_faces"].astype(np.float32))  # [F, 500]
-
-        mask_uv   = torch.isfinite(uv).all(dim=(1, 2))
-        mask_vals = torch.isfinite(vals).all(dim=1)
-        mask = mask_uv & mask_vals
-        # если все валидно — маска будет True везде
-        uv   = uv[mask]
-        vals = vals[mask]
-
-        data = {
-            "vertex": D["vertex"],
-            "edge_features": D["edge_features"],
-            "face_features": D["face_features"],
-            "coedge_features": D["coedge_features"],
-            "edge_to_vertex": D["edge_to_vertex"],
-            "face_to_edge": f_e.contiguous(),
-            "face_to_face": D["face_to_face"],
+        data_np = {
+            "vertex": D["vertex"].astype(np.float32),
+            "edge_features": D["edge_features"].astype(np.float32),
+            "face_features": D["face_features"].astype(np.float32),
+            "coedge_features": D["coedge_features"].astype(np.float32),
         }
-        # Стандартизация только для обучающей выборки
-        if self.feature_standardization is not None:
-            data = standarize_data(data, self.feature_standardization)
+
+        # Применяем стандартизацию только для обучающей выборки
+        if self.split == "training_set" and self.feature_standardization is not None:
+             # standarize_data ожидает словарь с определенными ключами
+
+             data_to_standardize = {
+                 "face_features": data_np["face_features"],
+                 "edge_features": data_np["edge_features"],
+                 "coedge_features": data_np["coedge_features"]
+             }
+             standardized_data = standarize_data(data_to_standardize, self.feature_standardization)
+             # Обновляем стандартизированные признаки в data_np
+             data_np.update(standardized_data)
 
         return {
             "name": file_name,
-            "vertices": torch.from_numpy(data["vertex"].astype(np.float32)),
-            "edges": torch.from_numpy(data["edge_features"].astype(np.float32)),
-            "faces": torch.from_numpy(data["face_features"].astype(np.float32)),
-            "edge_to_vertex": torch.from_numpy(data["edge_to_vertex"].astype(np.int64)),
-            "face_to_edge": torch.from_numpy(D["face_to_edge"][::-1].astype(np.int64)).t(),   # [2, n_f]
-            "face_to_face": torch.from_numpy(data["face_to_face"].astype(np.int64)),
-            "sdf_uv": uv.contiguous(),       # [n_faces, n_samples, 2]
-            "sdf_vals": vals.contiguous()      # [n_faces, n_samples]
+            "vertices": torch.from_numpy(data_np["vertex"]),
+            "edges": torch.from_numpy(data_np["edge_features"]),
+            "faces": torch.from_numpy(data_np["face_features"]),
+            "edge_to_vertex": torch.from_numpy(D["edge_to_vertex"].astype(np.int64)),
+            "face_to_edge": torch.from_numpy(D["face_to_edge"].astype(np.int64)),
+            "face_to_face": torch.from_numpy(D["face_to_face"].astype(np.int64)),
+            "sdf_uv": torch.from_numpy(D["uv_faces"].astype(np.float32)),
+            "sdf_vals": torch.from_numpy(D["sdf_faces"].astype(np.float32))
         }

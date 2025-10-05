@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import Tuple
 
 def l2norm(x: np.ndarray, axis: int = -1, eps: float = 1e-9) -> np.ndarray:
     """L2 нормализация векторов для корректного расчета косинусного сходства."""
